@@ -1,10 +1,15 @@
 import cv2
 import dlib
 import numpy as np
-import math
+import os
+import urllib.request
+import bz2
 
 class EyeTracker:
     def __init__(self):
+        # Download landmark file if it doesn't exist
+        self.download_landmark_file()
+        
         # Initialize face detector and shape predictor
         self.detector = dlib.get_frontal_face_detector()
         self.predictor = dlib.shape_predictor("shape_predictor_68_face_landmarks.dat")
@@ -18,6 +23,37 @@ class EyeTracker:
         self.eye_center = None
         self.gaze_point = (320, 240)  # Default center point
         
+    def download_landmark_file(self):
+        """Download the facial landmark predictor file if it doesn't exist"""
+        landmark_file = "shape_predictor_68_face_landmarks.dat"
+        
+        if not os.path.exists(landmark_file):
+            print("Landmark file not found. Downloading...")
+            try:
+                # URL for the compressed landmark file
+                url = "http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2"
+                compressed_file = "shape_predictor_68_face_landmarks.dat.bz2"
+                
+                # Download the compressed file
+                print("Downloading shape_predictor_68_face_landmarks.dat.bz2...")
+                urllib.request.urlretrieve(url, compressed_file)
+                
+                # Extract the file
+                print("Extracting...")
+                with bz2.BZ2File(compressed_file, 'rb') as f_in:
+                    with open(landmark_file, 'wb') as f_out:
+                        f_out.write(f_in.read())
+                
+                # Remove the compressed file
+                os.remove(compressed_file)
+                print("Download and extraction completed!")
+                
+            except Exception as e:
+                print(f"Error downloading landmark file: {e}")
+                print("Please manually download 'shape_predictor_68_face_landmarks.dat' from:")
+                print("http://dlib.net/files/shape_predictor_68_face_landmarks.dat.bz2")
+                raise
+    
     def get_eye_landmarks(self, landmarks):
         """Extract eye landmarks from facial landmarks"""
         left_eye = []
@@ -45,7 +81,7 @@ class EyeTracker:
     
     def detect_pupil(self, eye_region, eye_landmarks):
         """Detect pupil in eye region"""
-        if eye_region is None:
+        if eye_region is None or eye_region.size == 0:
             return None
             
         # Convert to grayscale
@@ -76,6 +112,9 @@ class EyeTracker:
         w = min(w, frame.shape[1] - x)
         h = min(h, frame.shape[0] - y)
         
+        if w <= 0 or h <= 0:
+            return None, (0, 0)
+        
         return frame[y:y+h, x:x+w], (x, y)
     
     def calculate_gaze_point(self, left_pupil, right_pupil, left_offset, right_offset):
@@ -104,73 +143,81 @@ class EyeTracker:
     def run(self):
         """Main tracking loop"""
         print("Eye Tracker Started! Press 'q' to quit.")
-        print("Make sure you have downloaded the shape_predictor_68_face_landmarks.dat file!")
         
-        while True:
-            ret, frame = self.cap.read()
-            if not ret:
-                print("Failed to grab frame")
-                break
-                
-            # Flip frame horizontally for mirror effect
-            frame = cv2.flip(frame, 1)
-            gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-            
-            # Detect faces
-            faces = self.detector(gray)
-            
-            for face in faces:
-                # Get facial landmarks
-                landmarks = self.predictor(gray, face)
-                
-                # Get eye landmarks
-                left_eye, right_eye = self.get_eye_landmarks(landmarks)
-                
-                # Extract eye regions
-                left_eye_region, left_offset = self.extract_eye_region(frame, left_eye)
-                right_eye_region, right_offset = self.extract_eye_region(frame, right_eye)
-                
-                # Detect pupils
-                left_pupil = self.detect_pupil(left_eye_region, left_eye)
-                right_pupil = self.detect_pupil(right_eye_region, right_eye)
-                
-                # Calculate gaze point
-                self.gaze_point = self.calculate_gaze_point(left_pupil, right_pupil, left_offset, right_offset)
-                
-                # Draw eye landmarks
-                for point in left_eye + right_eye:
-                    cv2.circle(frame, point, 2, (0, 255, 0), -1)
-                
-                # Draw pupil positions if detected
-                if left_pupil:
-                    pupil_pos = (left_pupil[0] + left_offset[0], left_pupil[1] + left_offset[1])
-                    cv2.circle(frame, pupil_pos, 3, (255, 0, 0), -1)
+        try:
+            while True:
+                ret, frame = self.cap.read()
+                if not ret:
+                    print("Failed to grab frame")
+                    break
                     
-                if right_pupil:
-                    pupil_pos = (right_pupil[0] + right_offset[0], right_pupil[1] + right_offset[1])
-                    cv2.circle(frame, pupil_pos, 3, (255, 0, 0), -1)
-            
-            # Draw gaze indicator (large circle)
-            cv2.circle(frame, self.gaze_point, 20, (0, 0, 255), 3)
-            cv2.circle(frame, self.gaze_point, 5, (0, 0, 255), -1)
-            
-            # Add instructions
-            cv2.putText(frame, "Red circle follows your gaze", (10, 30), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame, "Press 'q' to quit", (10, 60), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            
-            # Show frame
-            cv2.imshow('Eye Tracker', frame)
-            
-            # Check for quit
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                break
-        
-        # Cleanup
-        self.cap.release()
-        cv2.destroyAllWindows()
+                # Flip frame horizontally for mirror effect
+                frame = cv2.flip(frame, 1)
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                
+                # Detect faces
+                faces = self.detector(gray)
+                
+                for face in faces:
+                    # Get facial landmarks
+                    landmarks = self.predictor(gray, face)
+                    
+                    # Get eye landmarks
+                    left_eye, right_eye = self.get_eye_landmarks(landmarks)
+                    
+                    # Extract eye regions
+                    left_eye_region, left_offset = self.extract_eye_region(frame, left_eye)
+                    right_eye_region, right_offset = self.extract_eye_region(frame, right_eye)
+                    
+                    # Detect pupils
+                    left_pupil = self.detect_pupil(left_eye_region, left_eye)
+                    right_pupil = self.detect_pupil(right_eye_region, right_eye)
+                    
+                    # Calculate gaze point
+                    self.gaze_point = self.calculate_gaze_point(left_pupil, right_pupil, left_offset, right_offset)
+                    
+                    # Draw eye landmarks
+                    for point in left_eye + right_eye:
+                        cv2.circle(frame, point, 2, (0, 255, 0), -1)
+                    
+                    # Draw pupil positions if detected
+                    if left_pupil and left_eye_region is not None:
+                        pupil_pos = (left_pupil[0] + left_offset[0], left_pupil[1] + left_offset[1])
+                        cv2.circle(frame, pupil_pos, 3, (255, 0, 0), -1)
+                        
+                    if right_pupil and right_eye_region is not None:
+                        pupil_pos = (right_pupil[0] + right_offset[0], right_pupil[1] + right_offset[1])
+                        cv2.circle(frame, pupil_pos, 3, (255, 0, 0), -1)
+                
+                # Draw gaze indicator (large circle)
+                cv2.circle(frame, self.gaze_point, 20, (0, 0, 255), 3)
+                cv2.circle(frame, self.gaze_point, 5, (0, 0, 255), -1)
+                
+                # Add instructions
+                cv2.putText(frame, "Red circle follows your gaze", (10, 30), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame, "Press 'q' to quit", (10, 60), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                
+                # Show frame
+                cv2.imshow('Eye Tracker', frame)
+                
+                # Check for quit
+                if cv2.waitKey(1) & 0xFF == ord('q'):
+                    break
+                    
+        except Exception as e:
+            print(f"Error during execution: {e}")
+        finally:
+            # Cleanup
+            self.cap.release()
+            cv2.destroyAllWindows()
 
 if __name__ == "__main__":
-    tracker = EyeTracker()
-    tracker.run()
+    try:
+        tracker = EyeTracker()
+        tracker.run()
+    except Exception as e:
+        print(f"Failed to initialize eye tracker: {e}")
+        print("\nMake sure you have installed all required packages:")
+        print("pip install opencv-python dlib numpy")
